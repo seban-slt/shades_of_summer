@@ -1,0 +1,256 @@
+; ------------------------------------------------------------------------------
+;
+; Shades of Summer
+;
+; 256-byte intro for Silly Venture 2k25SE
+;
+; done by Seban/Slight, Summer 2025
+;
+; --> Public Domain <--
+;
+; .O.
+; ..O
+; OOO
+;
+; ------------------------------------------------------------------------------
+
+	opt	h+
+
+record	equ	0		; set to "1" when want to record the video
+
+; fire defs
+
+scrn	equ	$b000		; starting address of screen memory
+scrfire	equ	$b300		; last page of screen memory (for fire effect)
+firetop	equ	$b400		; end of screen memory (for fire effect)
+linelen	equ	40		; line length (in bytes)
+
+; zero page variables 
+
+buf1	equ	$f0		; pointer for buffer #1
+buf2	equ	$f2		; pointer for buffer #2
+drop	equ	$f4		; pointer for "drop" address
+
+	org	$5000
+
+; the WATER!
+
+main	lda	#0		; clear A reg.
+	tax			; and X reg. also!
+	clc
+	sta	$13		; clear mid byte of RTC
+	sta	$d208
+
+	ift	ZPZ		; if defined clear lo-byte of pointers
+
+	sta	buf1
+	sta	buf2
+
+	els			; if not defined we have spare bytes for...
+
+	sta	$d200		; clearing POKEY AUDF1 register
+
+	eif
+
+; prepare charset for GTIA 40x24 chunky mode
+
+chlp	ldy	#15		; set rep. counter
+rplp	sta	$8000,x		; save A as a charset value
+	inx			; next byte
+	dey			; dec. repetition counter
+	bpl	rplp		; do the loop until Y reg. is positive
+	adc	#$11		; add the value of "next shade of gray"
+	bcc	chlp		; loop until carry overflow (>$ff)
+
+; main loop
+
+loop	lda	$d40b		; wait for scan-line #128
+	bpl	*-3
+	sta	$2c8		; $80 in A reg. now, so set the background color
+	sta	$2f4		; set HI-byte of charset
+	lsr	@		; $80/2 = $40
+	sta	$26f		; turn on the GTIA mode (16 shades of one color)
+
+xor	lda	#$a0		; load HI byte of 1st buffer ($A0xx)
+	sta	buf1+1		; set HI byte of buffer #1 pointer
+	sta	$bc25		; modify DL (HI byte of screen address is now pointing @ buffer#1
+	eor	#$10		; XOR-ing by $10 we set the HI byte to $B0xx
+	sta	buf2+1		; set HI byte of buffer #2 pointer
+	sta	xor+1		; self. mod. code (swap buffer #1 & buffer #2 addresses)
+add	adc	#0		; add a RND value (0-3) to the HI byte of buffer #2)
+	sta	drop+1		; save in HI-byte off "rain drop" address
+
+	lda	$14		; raindrops every 8th-frame! 
+	and	#$07		; mask-out (lave only 3 lowest bits)
+	pha
+	bne	npr		; skip "rain drops" generation when not zero (rain drops generated every 8th frame)
+	lda	$d20a		; get random byte
+	sta	drop+0		; save in LO-byte of "rain drop" address
+
+	and	#$1f		; + sound fx
+	adc	#8
+	sta	$d200
+				; to save space we will use the same random byte to generate HI-byte off address
+	and	#$03		; mask out all bits except bits 0,1 (limit value to 0..3 range)
+	sta	add+1		; store directly into code (self mod. code saves some bytes)
+
+	lda	#$1f		; rain drops color value
+
+; draw raindrop shape
+
+	ldy	#41		; location of first pixel (x,y)
+	sta	(drop),y	; put pixel at 1st location
+	iny			; next pixel location (x+1,y)
+	sta	(drop),y	; put pixel at 2nd location
+	ldy	#81		; next pixel location (x,y+1)
+	sta	(drop),y	; put pixel at 3rd location
+	iny			; next pixel location (x+1,y+1)
+	sta	(drop),y	; put pixel at 4th location
+
+npr	pla
+	eor	#$a7
+	sta	$d201
+
+	ldx	#4		; # of pages to process
+
+; water processing loop
+;
+; buffer #2 --> current water state
+; buffer #1 --> previous water state
+;
+; for every byte/pixel in buffer #1 & #2 do...
+;
+; get those pixel values: A(X,Y-1), B(X-1,Y), C(X+1,Y), D(X,Y+1) from buffer #1
+;
+;    A
+;   BVC
+;    D
+;
+; get pixel value V from buffet #2
+;
+; then calculate: V= (A+B+C+D) /2 - V, when V<0 then V=-V
+;
+; ... and finally put the V value back into buffer #2
+
+lp1	clc			; carry clear
+	ldy	#1		; set pixel location
+	lda	(buf1),y	; get 1st pixel value
+	ldy	#81		; set pixel location
+	adc	(buf1),y	; add 2nd pixel value
+	ldy	#40		; set pixel location
+	adc	(buf1),y	; add 3rd pixel value
+	ldy	#42		; set pixel location
+	adc	(buf1),y	; add 4th pixel value
+	lsr	@		; divide by 2
+	dey			; adjust pixel location
+	sec			; set carry (for subtraction)
+	sbc	(buf2),y	; subtract pixel value from buffer #2
+	bcs	*+4		; skip when no overflow (>0)
+	eor	#$ff		; inverse all bits (theoretically -V is equal V=(V xor $ff)+1...
+				; but skipped +1 correction to save some bytes)
+
+	sta	(buf2),y	; save calculated pixel value in buffer #2
+	
+	inc	buf1		; increment LO-byte address of 1st buffer
+	inc	buf2		; increment LO-byte address of 2nd buffer
+	bne	lp1		; loop until overflow
+
+	inc	buf1+1		; increment HI-byte of buffer #1 pointer
+	inc	buf2+1		; increment HI-byte of buffer #2 pointer
+	dex			; decrement page counter
+	bne	lp1		; repeat until done
+
+	lda	$13		; get system timer value (mid byte)
+	cmp	#2		; wait for (512 * (1/50) ) --> 10.24 sec
+	bcc	loop		; jmp to main loop (shorter version of JMP)
+
+; -----------------------------------------------------------------------------
+;
+; the FIRE!
+
+	asl	@		; opt. (2*2 = 4 ;-)
+	sta	$d201
+
+	lda	#$b0		; set page #0
+	sta	$bc25
+	sta	$d200		; set FREQ
+	lda	#$30
+	sta	$2c8
+
+fireloop
+
+	ldy	#>scrfire	; load the HI-byte of last page of screen memory
+
+avglp	sty	s1+2		; put HI-byte od screen memory directly into code (self. mod. code used)
+	sty	s2+2
+	dey			; because of "negative indexing" we need to change page boundary
+
+	sty	s0+2		; and put decremented HI-byte directly into code
+	sty	s3+2
+	sty	s4+2
+
+; here we have the averaging loop
+; we don't care about carry bit, because we need more "random" noise from other pixels
+
+s0	lda	scrfire+0-1,x	; get X , Y pixel
+s1	adc	scrfire+1-1,x	; add X+1,Y pixel
+s2	adc	scrfire+2-1,x	; add X+2,Y pixel
+s3	adc	scrfire+1-40,x	; add X+1,Y-1 pixel
+
+	lsr	@		; ... divide by 2
+	lsr	@		; ... and again
+
+s4	sta	scrfire-40,x	; save new pixel value
+
+	php			; store status reg. on stack (we need Carry to be left untouched)
+
+; this should be done once per fire-loop, but due to optimization we do it here several times
+
+	cpx	#linelen	; compare X reg. with line length
+	bcs	rdn		; when X > screen line length skip
+
+	lda	$13		; get the sys timer (mid-byte)
+	cmp	#$04		; compare
+	lda	$d20a		; get random byte
+	bcc	rn_gen		; and when sys-timer is < 4, do the fire!
+	lda	#0		; in other case, stop the fire and...
+	sta	$d201		; mute the sound and...
+	sta	$2c8		; change background color to black!
+
+rn_gen	and	#$1f		; leave only 5 lower bits (values 0..31)
+	sta	firetop-40,x	; store in last screen line
+
+rdn	plp			; restore status reg.
+
+	inx			; next byte on page
+	bne	s0		; do the page loop
+
+	cpy	#[>scrfire]-3	; check if all screen-memory pages are processed
+	bcs	avglp		; no? then do the averaging loop again!
+
+	lda	$13		; get the system timer (mid-byte) value
+	cmp	#$05		; wait for next 10.24sec (5-3 = 2) --> (2*256 * (1/50) ) sec.
+	bcc	fireloop
+
+	jmp	main		; restar/re-loop the intro.
+
+; for video recording, when TRUE intro waits for a key before start
+
+	ift	record
+
+w_rec	lda	#$00
+	sta	$2c8
+	sta	$2c6
+	sta	$2c5
+
+	lda	#$04
+	bit	$d20f
+	bne	*-3
+
+	jmp	main
+
+	run	w_rec
+
+	eif
+
+	end

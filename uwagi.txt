@@ -1,0 +1,6 @@
+Uwaga! Intro w podstawowej wersji (255 bajtów długości) oczekuje że górna połówka strony zerowej będzie miała stan jak po zimnym starcie (a więc praktycznie same zera). Właściwie to tylko komórki $F0,$F2 na stronie zero muszą zwierać zera aby intro poprawnie renderowało efekt wody. Taki stan zapewnia chociażby BW-DOS, MYDOS czy loader zawarty w AVG cart (reszty nie sprawdzałem). Poprawne działanie zapewnia również bezpośrednie uruchomienie z pod emulatora (Atari800, Altirra) użyciem opcji boot-image.
+
+Jeżeli taki stan jest nieakceptowalny (nie widziałem w regulaminie zastrzeżeń), proszę uruchamiać wersję .zpg.xex (która zeruje potrzebne komórki). Jednak w tym wypadku przy restarcie efektu wody wybrzmi o jedna niepotrzebna wnerwiająca "nuta", co mnie po prostu irytuje ;-)
+
+Zakładam jednak ze takie założenie (górna połówka strony zero wyzerowana) jest słuszne ponieważ system operacyjny podczas procedury zimnego startu zeruje praktycznie cały RAM ($0008-$BFFF). Niemniej jednak w archiwum .zip załączam dwie wersje (nie zerującą .xex o długości 255 bajtów, oraz zerującą sobie zero page (.zpz.xex) o długości 256 bajtów.
+
